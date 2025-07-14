@@ -62,8 +62,11 @@ abstract contract BaseTWAPPriceSentinelDeployer is Script {
         console.log("  Timestamp:", timestamp1);
 
         // Wait 31 seconds (minimum is 30 seconds)
-        console.log("\nWarping time forward 31 seconds...");
-        vm.warp(block.timestamp + 31);
+        console.log("\nWaiting 31 seconds for price update...");
+        console.log("Please wait for the oracle to accept a new observation...");
+        
+        // Use vm.sleep to actually wait in real time
+        vm.sleep(31 * 1000); // vm.sleep takes milliseconds
 
         // Add second observation
         console.log("Adding second observation...");
@@ -144,7 +147,7 @@ abstract contract BaseTWAPPriceSentinelDeployer is Script {
         console.log("   Total observations:", obsCount);
         for (uint256 i = 0; i < obsCount && i < 5; i++) {
             (uint128 price, uint128 timestamp) = sentinel.getObservation(i);
-            console.log("   Obs", i, "- Price:", price, "Timestamp:", timestamp);
+            console.log(string.concat("   Obs ", vm.toString(i), " - Price: ", vm.toString(price), " Timestamp: ", vm.toString(timestamp)));
         }
     }
 
@@ -161,11 +164,6 @@ abstract contract BaseTWAPPriceSentinelDeployer is Script {
             return;
         }
 
-        try AggregatorV3Interface(feedAddress).description() returns (string memory desc) {
-            console.log("Feed description:", desc);
-        } catch {
-            console.log("No description available");
-        }
 
         try AggregatorV3Interface(feedAddress).latestRoundData() returns (
             uint80 roundId, int256 price, uint256 startedAt, uint256 updatedAt, uint80 answeredInRound
