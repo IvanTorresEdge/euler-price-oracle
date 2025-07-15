@@ -8,6 +8,7 @@ evm_version = "cancun"
 optimizer = true
 optimizer_runs = 100_000
 ffi = false
+fs_permissions = [{ access = "read-write", path = "./" }]
 
 [profile.coverage]
 optimizer = true
