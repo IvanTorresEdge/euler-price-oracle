@@ -130,14 +130,14 @@ contract TWAPPriceSentinel is BaseAdapter {
     /// @notice Internal price update logic
     function _updatePrice() private {
         // Get latest price from feed
-        (, int256 price,, uint256 updatedAt,) = priceFeed.latestRoundData();
+        (, int256 price,,,) = priceFeed.latestRoundData();
 
         // Validate price
         if (price <= 0) revert TWAPPriceSentinel_InvalidFeedPrice();
 
         // Store observation
         observations[nextObservationIndex] =
-            Observation({price: uint128(uint256(price)), timestamp: uint128(updatedAt)});
+            Observation({price: uint128(uint256(price)), timestamp: uint128(block.timestamp)});
 
         // Update circular buffer index
         nextObservationIndex = (nextObservationIndex + 1) % OBSERVATION_BUFFER_SIZE;
