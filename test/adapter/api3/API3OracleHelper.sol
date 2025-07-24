@@ -10,7 +10,7 @@ import {API3Oracle} from "src/adapter/api3/API3Oracle.sol";
 
 contract API3OracleHelper is AdapterHelper {
     uint256 internal constant MAX_STALENESS_LOWER_BOUND = 1 minutes;
-    uint256 internal constant MAX_STALENESS_UPPER_BOUND = 72 hours;
+    uint256 internal constant MAX_STALENESS_UPPER_BOUND = 24 hours + 2 hours; // 24h + 2h buffer
 
     struct Bounds {
         uint8 minBaseDecimals;
@@ -60,7 +60,17 @@ contract API3OracleHelper is AdapterHelper {
         s.base = boundAddr(s.base);
         s.quote = boundAddr(s.quote);
         s.feed = boundAddr(s.feed);
-        vm.assume(distinct(s.base, s.quote, s.feed));
+
+        // Ensure addresses are distinct by using fixed offsets that won't overflow
+        if (s.base == s.quote) {
+            s.quote = address(0x100000001);
+        }
+        if (s.base == s.feed) {
+            s.feed = address(0x100000002);
+        }
+        if (s.quote == s.feed) {
+            s.feed = address(0x100000003);
+        }
 
         if (behaviors[Behavior.Constructor_MaxStalenessTooLow]) {
             s.maxStaleness = bound(s.maxStaleness, 0, MAX_STALENESS_LOWER_BOUND - 1);
@@ -76,13 +86,16 @@ contract API3OracleHelper is AdapterHelper {
         vm.mockCall(s.base, abi.encodeWithSelector(IERC20.decimals.selector), abi.encode(s.baseDecimals));
         vm.mockCall(s.quote, abi.encodeWithSelector(IERC20.decimals.selector), abi.encode(s.quoteDecimals));
 
+        // Mock feed decimals() call to return 18 (API3 default)
+        vm.mockCall(s.feed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), abi.encode(uint8(18)));
+
         if (behaviors[Behavior.Constructor_MaxStalenessTooLow] || behaviors[Behavior.Constructor_MaxStalenessTooHigh]) {
             // For constructor tests that should revert, we don't need to set up the full state
-            oracle = address(new API3Oracle(s.base, s.quote, s.feed, s.maxStaleness));
+            oracle = address(new API3Oracle("BASE", s.base, "QUOTE", s.quote, s.feed, s.maxStaleness));
             return;
         }
 
-        oracle = address(new API3Oracle(s.base, s.quote, s.feed, s.maxStaleness));
+        oracle = address(new API3Oracle("BASE", s.base, "QUOTE", s.quote, s.feed, s.maxStaleness));
 
         if (behaviors[Behavior.FeedReturnsZeroPrice]) {
             s.value = 0;
@@ -106,9 +119,7 @@ contract API3OracleHelper is AdapterHelper {
             vm.mockCallRevert(s.feed, abi.encodeWithSelector(IApi3ReaderProxy.read.selector), "oops");
         } else {
             vm.mockCall(
-                s.feed,
-                abi.encodeWithSelector(IApi3ReaderProxy.read.selector),
-                abi.encode(s.value, s.timestamp)
+                s.feed, abi.encodeWithSelector(IApi3ReaderProxy.read.selector), abi.encode(s.value, s.timestamp)
             );
         }
 

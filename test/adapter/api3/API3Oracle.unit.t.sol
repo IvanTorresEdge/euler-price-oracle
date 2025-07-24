@@ -11,7 +11,7 @@ contract API3OracleTest is API3OracleHelper {
         setUpState(s);
         assertEq(API3Oracle(oracle).base(), s.base);
         assertEq(API3Oracle(oracle).quote(), s.quote);
-        assertEq(API3Oracle(oracle).feed(), s.feed);
+        assertEq(address(API3Oracle(oracle).feed()), s.feed);
         assertEq(API3Oracle(oracle).maxStaleness(), s.maxStaleness);
     }
 
@@ -29,7 +29,7 @@ contract API3OracleTest is API3OracleHelper {
             })
         );
         setBehavior(Behavior.Constructor_MaxStalenessTooLow, true);
-        vm.expectRevert();
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
         setUpState(s);
     }
 
@@ -47,7 +47,7 @@ contract API3OracleTest is API3OracleHelper {
             })
         );
         setBehavior(Behavior.Constructor_MaxStalenessTooHigh, true);
-        vm.expectRevert();
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
         setUpState(s);
     }
 
@@ -125,19 +125,150 @@ contract API3OracleTest is API3OracleHelper {
     }
 
     function test_Name() public {
-        setUpState(FuzzableState({
-            base: address(0x1),
-            quote: address(0x2),
-            feed: address(0x3),
-            maxStaleness: 1 hours,
-            baseDecimals: 18,
-            quoteDecimals: 18,
-            value: 1e18,
-            timestamp: 1000,
-            blockTimestamp: 1000,
-            inAmount: 1e18
-        }));
-        
-        assertEq(API3Oracle(oracle).name(), "API3Oracle");
+        setUpState(
+            FuzzableState({
+                base: address(0x1),
+                quote: address(0x2),
+                feed: address(0x3),
+                maxStaleness: 1 hours,
+                baseDecimals: 18,
+                quoteDecimals: 18,
+                value: 1e18,
+                timestamp: 1000,
+                blockTimestamp: 1000,
+                inAmount: 1e18
+            })
+        );
+
+        assertEq(API3Oracle(oracle).name(), "API3Oracle BASE/QUOTE");
+    }
+
+    function test_Constructor_RevertsWhen_BaseIsZero() public {
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
+        new API3Oracle(
+            "ETH",
+            address(0), // base is zero
+            "USD",
+            address(0x348),
+            address(0x3),
+            1 hours
+        );
+    }
+
+    function test_Constructor_RevertsWhen_QuoteIsZero() public {
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
+        new API3Oracle(
+            "ETH",
+            address(0x1),
+            "USD",
+            address(0), // quote is zero
+            address(0x3),
+            1 hours
+        );
+    }
+
+    function test_Constructor_RevertsWhen_FeedIsZero() public {
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
+        new API3Oracle(
+            "ETH",
+            address(0x1),
+            "USD",
+            address(0x348),
+            address(0), // feed is zero
+            1 hours
+        );
+    }
+
+    function test_Constructor_SucceedsAt26Hours() public {
+        // Mock feed decimals call
+        address mockFeed = address(0x3);
+        vm.mockCall(mockFeed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), abi.encode(uint8(18)));
+
+        // Should succeed at exactly 26 hours (24h + 2h buffer)
+        API3Oracle oracle = new API3Oracle("ETH", address(0x1), "USD", address(0x348), mockFeed, 26 hours);
+
+        assertEq(oracle.maxStaleness(), 26 hours);
+        assertEq(oracle.feedDecimals(), 18);
+    }
+
+    function test_Constructor_RevertsAt26HoursPlus1Second() public {
+        // Should revert at 26 hours + 1 second
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
+        new API3Oracle("ETH", address(0x1), "USD", address(0x348), address(0x3), 26 hours + 1 seconds);
+    }
+
+    function test_Constructor_RevertsWhen_USDFeedReturnsNon18Decimals() public {
+        // Mock a feed that returns non-18 decimals for USD
+        address mockFeed = address(0x123);
+        vm.mockCall(mockFeed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), abi.encode(uint8(8)));
+
+        vm.expectRevert(Errors.PriceOracle_InvalidConfiguration.selector);
+        new API3Oracle(
+            "ETH",
+            address(0x1),
+            "USD", // USD symbol with non-18 decimals should revert
+            address(0x348),
+            mockFeed,
+            1 hours
+        );
+    }
+
+    function test_Constructor_SucceedsWhen_USDFeedReturns18Decimals() public {
+        // Mock a feed that returns 18 decimals for USD
+        address mockFeed = address(0x124);
+        vm.mockCall(mockFeed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), abi.encode(uint8(18)));
+        vm.mockCall(
+            mockFeed,
+            abi.encodeWithSelector(bytes4(keccak256("read()"))),
+            abi.encode(int224(1e18), uint256(block.timestamp))
+        );
+
+        API3Oracle oracle = new API3Oracle(
+            "ETH",
+            address(0x1),
+            "USD", // USD symbol with 18 decimals should succeed
+            address(0x348),
+            mockFeed,
+            1 hours
+        );
+
+        assertEq(oracle.feedDecimals(), 18);
+    }
+
+    function test_Constructor_SucceedsWhen_NonUSDFeedReturnsNon18Decimals() public {
+        // Mock a feed that returns non-18 decimals for non-USD pair
+        address mockFeed = address(0x125);
+        vm.mockCall(mockFeed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), abi.encode(uint8(8)));
+        vm.mockCall(
+            mockFeed,
+            abi.encodeWithSelector(bytes4(keccak256("read()"))),
+            abi.encode(int224(1e8), uint256(block.timestamp))
+        );
+
+        API3Oracle oracle = new API3Oracle(
+            "rETH",
+            address(0x1),
+            "WETH", // Non-USD symbol with non-18 decimals should succeed
+            address(0x2),
+            mockFeed,
+            1 hours
+        );
+
+        assertEq(oracle.feedDecimals(), 8);
+    }
+
+    function test_Constructor_FallbackTo18DecimalsWhen_DecimalsCallFails() public {
+        // Mock a feed that doesn't implement decimals()
+        address mockFeed = address(0x126);
+        vm.mockCallRevert(mockFeed, abi.encodeWithSelector(bytes4(keccak256("decimals()"))), "not implemented");
+        vm.mockCall(
+            mockFeed,
+            abi.encodeWithSelector(bytes4(keccak256("read()"))),
+            abi.encode(int224(1e18), uint256(block.timestamp))
+        );
+
+        API3Oracle oracle = new API3Oracle("ETH", address(0x1), "USD", address(0x348), mockFeed, 1 hours);
+
+        assertEq(oracle.feedDecimals(), 18); // Should fallback to 18
     }
 }
